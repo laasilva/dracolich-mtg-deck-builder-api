@@ -183,8 +183,8 @@ jobs:
       - name: Download jar artifact
         uses: actions/download-artifact@v4
         with:
-          name: dracolich-ai-web-jar
-          path: dracolich-ai-web/target/
+          name: mtg-deck-builder-api-web-jar
+          path: mtg-deck-builder-api-web/target/
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -201,5 +201,5 @@ jobs:
           context: .
           push: true
           tags: |
-            laaasilva/dracolich:ai-web-${{ steps.version.outputs.version }}
-            laaasilva/dracolich:ai-web-latest
+            laaasilva/dracolich:mtg-deck-builder-api-web-${{ steps.version.outputs.version }}
+            laaasilva/dracolich:mtg-deck-builder-api-web-latest
