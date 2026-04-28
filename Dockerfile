@@ -15,11 +15,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 RUN useradd -r -s /bin/false -U -d /opt/mtg-deck-builder appuser \
-    && mkdir -p /opt/mtg-ai \
+    && mkdir -p /opt/mtg-deck-builder \
     && chown -R appuser:appuser /opt/mtg-deck-builder
 
 USER appuser
-WORKDIR /opt/mtg-ai
+WORKDIR /opt/mtg-deck-builder
 
 COPY --chown=appuser:appuser mtg-deck-builder-api-web/target/mtg-deck-builder-api-web.jar /opt/mtg-deck-builder/mtg-deck-builder.jar
 
