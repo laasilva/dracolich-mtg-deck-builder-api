@@ -31,6 +31,12 @@ public final class ErrorUtil {
                 List.of(error), HttpStatus.UNAUTHORIZED);
     }
 
+    public static ResponseException deckAlreadyClaimed(String deckId) {
+        var error = new ApiError(ErrorCodes.DMD036);
+        return new ResponseException(ErrorCodes.DMD036.format(deckId),
+                List.of(error), HttpStatus.CONFLICT);
+    }
+
     public static ResponseException importFailed(List<ImportFailure> failures) {
         List<ApiError> errors = failures.stream()
                 .map(f -> new ApiError(

@@ -7,6 +7,8 @@ import dm.dracolich.mtgLibrary.dto.enums.Format;
 import org.springframework.data.domain.Page;
 import reactor.core.publisher.Mono;
 
+import java.util.Set;
+
 public interface DeckCustomRepository {
     Mono<Page<DeckEntity>> findUserDecksByFilters(String userId,
                                                   Format format,
@@ -18,4 +20,8 @@ public interface DeckCustomRepository {
     Mono<Page<DeckEntity>> findPopularPublicDecks(Format format, int page, int size);
 
     Mono<Page<DeckEntity>> findLatestPublicDecks(Format format, int page, int size);
+
+    Mono<Page<DeckEntity>> findPublicDecksByUserId(String userId, Format format, int page, int size);
+
+    Mono<Page<DeckEntity>> findPublicDecksByIds(Set<String> deckIds, int page, int size);
 }

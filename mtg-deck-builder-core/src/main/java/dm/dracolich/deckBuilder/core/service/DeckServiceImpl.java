@@ -11,7 +11,9 @@ import dm.dracolich.deckBuilder.core.validation.FormatRuleSetRegistry;
 import dm.dracolich.deckBuilder.data.entity.AuditEntity;
 import dm.dracolich.deckBuilder.data.entity.DeckCardEntity;
 import dm.dracolich.deckBuilder.data.entity.DeckEntity;
+import dm.dracolich.deckBuilder.data.entity.FavoriteEntity;
 import dm.dracolich.deckBuilder.data.repository.DeckRepository;
+import dm.dracolich.deckBuilder.data.repository.FavoriteRepository;
 import dm.dracolich.deckBuilder.dto.CardRequest;
 import dm.dracolich.deckBuilder.dto.CreateDeckRequest;
 import dm.dracolich.deckBuilder.dto.DeckAnalysisDto;
@@ -20,6 +22,8 @@ import dm.dracolich.deckBuilder.dto.DeckStatsDto;
 import dm.dracolich.deckBuilder.dto.DeckValidationDto;
 import dm.dracolich.deckBuilder.dto.ImportDeckRequest;
 import dm.dracolich.deckBuilder.dto.ImportValidateRequest;
+import dm.dracolich.deckBuilder.dto.UpdateCardRequest;
+import dm.dracolich.deckBuilder.dto.UpdateDeckRequest;
 import dm.dracolich.deckBuilder.dto.ValidateDeckRequest;
 import dm.dracolich.deckBuilder.dto.ValidationViolationDto;
 import dm.dracolich.deckBuilder.dto.enums.CardCategory;
@@ -44,7 +48,9 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
+import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.deckAlreadyClaimed;
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.importFailed;
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.notFound;
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.unauthorized;
@@ -53,6 +59,7 @@ import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.unauthorized;
 @RequiredArgsConstructor
 public class DeckServiceImpl implements DeckService {
     private final DeckRepository repo;
+    private final FavoriteRepository favoriteRepo;
     private final DeckMapper mapper;
 
     private final DracolichMtgLibraryClient libraryFeignClient;
@@ -107,6 +114,48 @@ public class DeckServiceImpl implements DeckService {
                 .flatMap(principal -> buildRemoveCardFromDeck(principal, id, cardId))
                 .flatMap(repo::save)
             .thenReturn(true);
+    }
+
+    @Override
+    public Mono<DeckDto> updateDeck(String id, UpdateDeckRequest request) {
+        return ReactiveSecurityContextUtil.getPrincipal()
+                .switchIfEmpty(Mono.error(unauthorized()))
+                .flatMap(principal -> buildUpdateDeckEntity(principal, id, request))
+                .flatMap(repo::save)
+                .map(mapper::toDto);
+    }
+
+    @Override
+    public Mono<DeckDto> updateCardInDeck(String id, String cardId, CardCategory category, UpdateCardRequest request) {
+        return ReactiveSecurityContextUtil.getPrincipal()
+                .switchIfEmpty(Mono.error(unauthorized()))
+                .flatMap(principal -> buildUpdateCardInDeck(principal, id, cardId, category, request))
+                .flatMap(repo::save)
+                .map(mapper::toDto);
+    }
+
+    @Override
+    public Mono<DeckDto> claimDeck(String id, String cookieAnonId) {
+        return ReactiveSecurityContextUtil.getPrincipal()
+                .switchIfEmpty(Mono.error(unauthorized()))
+                .flatMap(principal -> buildClaimDeck(principal, id, cookieAnonId))
+                .flatMap(repo::save)
+                .map(mapper::toDto);
+    }
+
+    @Override
+    public Mono<Page<DeckDto>> listPublicUserDecks(String userId, Format format, int page, int size) {
+        return repo.findPublicDecksByUserId(userId, format, page, size)
+                .map(p -> p.map(mapper::toDto));
+    }
+
+    @Override
+    public Mono<Page<DeckDto>> listPublicUserFavorites(String userId, int page, int size) {
+        return favoriteRepo.findByUserId(userId)
+                .map(FavoriteEntity::getDeckIds)
+                .defaultIfEmpty(Set.of())
+                .flatMap(deckIds -> repo.findPublicDecksByIds(deckIds, page, size))
+                .map(p -> p.map(mapper::toDto));
     }
 
     @Override
@@ -317,6 +366,61 @@ public class DeckServiceImpl implements DeckService {
                 .map(deckEntity -> {
                     deckEntity.getCards().removeIf(card -> card.getCardId().equals(cardId));
                     return touchLastModified(deckEntity);
+                });
+    }
+
+    private Mono<DeckEntity> buildUpdateDeckEntity(Principal principal, String id, UpdateDeckRequest request) {
+        return loadOwnedDeckOrFail(id, principal, "update_deck")
+                .flatMap(deck -> {
+                    if (principal.isAnon() && request.visibility() != null
+                            && request.visibility() != Visibility.PRIVATE) {
+                        return Mono.error(unauthorized());
+                    }
+                    if (request.name() != null) deck.setName(request.name());
+                    if (request.description() != null) deck.setDescription(request.description());
+                    if (request.format() != null) deck.setFormat(request.format());
+                    if (request.deckStatus() != null) deck.setStatus(request.deckStatus());
+                    if (request.visibility() != null) deck.setVisibility(request.visibility());
+                    return Mono.just(touchLastModified(deck));
+                });
+    }
+
+    private Mono<DeckEntity> buildUpdateCardInDeck(Principal principal, String id, String cardId,
+                                                   CardCategory category, UpdateCardRequest request) {
+        CardCategory targetCategory = category != null ? category : CardCategory.MAINBOARD;
+        return loadOwnedDeckOrFail(id, principal, "update_card_in_deck")
+                .flatMap(deck -> {
+                    Optional<DeckCardEntity> match = deck.getCards().stream()
+                            .filter(c -> c.getCardId().equals(cardId)
+                                    && c.getCardCategory() == targetCategory)
+                            .findFirst();
+                    if (match.isEmpty()) {
+                        return Mono.error(notFound("update_card_in_deck", "card", cardId));
+                    }
+                    match.get().setCount(request.count());
+                    return Mono.just(touchLastModified(deck));
+                });
+    }
+
+    private Mono<DeckEntity> buildClaimDeck(Principal principal, String id, String cookieAnonId) {
+        if (!principal.isUser()) {
+            return Mono.error(unauthorized());
+        }
+        if (cookieAnonId == null || cookieAnonId.isBlank()) {
+            return Mono.error(unauthorized());
+        }
+        return repo.findById(id)
+                .switchIfEmpty(Mono.error(notFound("claim_deck", "deck", id)))
+                .flatMap(deck -> {
+                    if (deck.getUserId() != null) {
+                        return Mono.error(deckAlreadyClaimed(id));
+                    }
+                    if (deck.getAnonId() == null || !deck.getAnonId().equals(cookieAnonId)) {
+                        return Mono.error(unauthorized());
+                    }
+                    deck.setUserId(principal.id());
+                    deck.setAnonId(null);
+                    return Mono.just(deck);
                 });
     }
 

@@ -2,7 +2,7 @@ name: Tag and Release
 on:
   push:
     branches:
-      - main
+      - dev
 
 permissions:
   contents: write
@@ -201,5 +201,42 @@ jobs:
           context: .
           push: true
           tags: |
-            laaasilva/dracolich:mtg-deck-builder-api-web-${{ steps.version.outputs.version }}
-            laaasilva/dracolich:mtg-deck-builder-api-web-latest
+            laaasilva/dracolich:deck-builder-api-${{ steps.version.outputs.version }}
+            laaasilva/dracolich:deck-builder-api-latest
+
+  helm-bump:
+    needs: [increment-tag, docker-publish]
+    if: needs.increment-tag.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout dracolich-helm
+        uses: actions/checkout@v4
+        with:
+          repository: laasilva/dracolich-helm
+          token: ${{ secrets.DRACOLICH_HELM_PAT }}
+          path: dracolich-helm
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG=${{ needs.increment-tag.outputs.new_tag }}
+          echo "version=${TAG#v}" >> $GITHUB_OUTPUT
+
+      - name: Bump image tag in values-dev.yaml
+        run: |
+          cd dracolich-helm
+          yq -i '.image.tag = "deck-builder-api-${{ steps.version.outputs.version }}"' \
+            services/deck-builder-api/values-dev.yaml
+
+      - name: Commit and push
+        run: |
+          cd dracolich-helm
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add services/deck-builder-api/values-dev.yaml
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: bump deck-builder-api to ${{ steps.version.outputs.version }}"
+            git push
+          fi

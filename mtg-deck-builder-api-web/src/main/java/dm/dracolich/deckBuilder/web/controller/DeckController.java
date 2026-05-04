@@ -9,9 +9,14 @@ import dm.dracolich.deckBuilder.dto.DeckStatsDto;
 import dm.dracolich.deckBuilder.dto.DeckValidationDto;
 import dm.dracolich.deckBuilder.dto.ImportDeckRequest;
 import dm.dracolich.deckBuilder.dto.ImportValidateRequest;
+import dm.dracolich.deckBuilder.dto.UpdateCardRequest;
+import dm.dracolich.deckBuilder.dto.UpdateDeckRequest;
 import dm.dracolich.deckBuilder.dto.ValidateDeckRequest;
+import dm.dracolich.deckBuilder.dto.enums.CardCategory;
 import dm.dracolich.deckBuilder.dto.enums.DeckStatus;
 import dm.dracolich.deckBuilder.dto.enums.Visibility;
+import dm.dracolich.forge.security.AnonCookieFilter;
+import dm.dracolich.forge.security.AnonCookieSigner;
 import dm.dracolich.mtgLibrary.dto.enums.Format;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -24,6 +29,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 @RestController
@@ -32,6 +38,7 @@ import reactor.core.publisher.Mono;
 @RequiredArgsConstructor
 public class DeckController {
     private final DeckService service;
+    private final AnonCookieSigner anonCookieSigner;
 
     @Operation(summary = "Create a new deck", description = "Creates a new deck")
     @ApiResponses(value = {
@@ -68,6 +75,65 @@ public class DeckController {
     public Mono<DeckDto> addCardToDeck(@PathVariable String id,
                                  @Valid @RequestBody CardRequest request) {
         return service.addCardToDeck(id, request);
+    }
+
+    @Operation(summary = "Update deck metadata", description = "Update deck metadata (name, description, format, status, visibility). Only non-null fields are applied. Anon owners cannot promote a deck off PRIVATE.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Deck updated successfully",
+                    content = @Content(schema = @Schema(implementation = DeckDto.class))),
+            @ApiResponse(responseCode = "400", description = "Validation error",
+                    content = @Content(schema = @Schema(implementation = DeckDto.class))),
+            @ApiResponse(responseCode = "401", description = "Unauthorized",
+                    content = @Content(schema = @Schema(implementation = DeckDto.class))),
+            @ApiResponse(responseCode = "404", description = "Deck not found",
+                    content = @Content(schema = @Schema(implementation = DeckDto.class))),
+            @ApiResponse(responseCode = "503", description = "Internal server error",
+                    content = @Content(schema = @Schema(implementation = DeckDto.class)))
+    })
+    @PutMapping(path = {"/{id}"}, produces = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<DeckDto> updateDeck(@PathVariable String id,
+                                    @Valid @RequestBody UpdateDeckRequest request) {
+        return service.updateDeck(id, request);
+    }
+
+    @Operation(summary = "Update card quantity", description = "Update the count of an existing card in a deck. To remove the card, use DELETE. Disambiguates by ?category= query param (default MAINBOARD) when the same card exists in multiple boards.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Card updated successfully",
+                    content = @Content(schema = @Schema(implementation = DeckDto.class))),
+            @ApiResponse(responseCode = "400", description = "Validation error",
+                    content = @Content(schema = @Schema(implementation = DeckDto.class))),
+            @ApiResponse(responseCode = "401", description = "Unauthorized",
+                    content = @Content(schema = @Schema(implementation = DeckDto.class))),
+            @ApiResponse(responseCode = "404", description = "Card not found in deck",
+                    content = @Content(schema = @Schema(implementation = DeckDto.class))),
+            @ApiResponse(responseCode = "503", description = "Internal server error",
+                    content = @Content(schema = @Schema(implementation = DeckDto.class)))
+    })
+    @PutMapping(path = {"/{id}/cards/{cardId}"}, produces = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<DeckDto> updateCardInDeck(@PathVariable String id,
+                                          @PathVariable String cardId,
+                                          @RequestParam(required = false) CardCategory category,
+                                          @Valid @RequestBody UpdateCardRequest request) {
+        return service.updateCardInDeck(id, cardId, category, request);
+    }
+
+    @Operation(summary = "Claim an anon deck", description = "Transfer ownership of an anon-owned deck to the authenticated user. Requires a valid anon cookie matching the deck's anon owner. Returns 409 if already claimed.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Deck claimed successfully",
+                    content = @Content(schema = @Schema(implementation = DeckDto.class))),
+            @ApiResponse(responseCode = "401", description = "Unauthorized",
+                    content = @Content(schema = @Schema(implementation = DeckDto.class))),
+            @ApiResponse(responseCode = "404", description = "Deck not found",
+                    content = @Content(schema = @Schema(implementation = DeckDto.class))),
+            @ApiResponse(responseCode = "409", description = "Deck already claimed",
+                    content = @Content(schema = @Schema(implementation = DeckDto.class))),
+            @ApiResponse(responseCode = "503", description = "Internal server error",
+                    content = @Content(schema = @Schema(implementation = DeckDto.class)))
+    })
+    @PostMapping(path = {"/{id}/claim"}, produces = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<DeckDto> claimDeck(@PathVariable String id, ServerWebExchange exchange) {
+        String cookieAnonId = AnonCookieFilter.readAnonIdCookie(exchange, anonCookieSigner).orElse(null);
+        return service.claimDeck(id, cookieAnonId);
     }
 
     @Operation(summary = "Copy deck", description = "Copy existing deck to user's account")
