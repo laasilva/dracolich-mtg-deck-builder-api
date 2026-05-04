@@ -22,3 +22,5 @@ dracolich:
     secret: ${ANON_COOKIE_SECRET}
     lifetime: PT24H
     secure: false
+  jwt:
+    public-key: ${DRACOLICH_JWT_PUBLIC_KEY:classpath:keys/ec-public.pem}
