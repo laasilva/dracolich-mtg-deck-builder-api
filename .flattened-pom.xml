@@ -35,7 +35,7 @@
   </distributionManagement>
   <properties>
     <dracolich.ai-api.version>1.2.0</dracolich.ai-api.version>
-    <dracolich.forge.version>8.1.0</dracolich.forge.version>
+    <dracolich.forge.version>8.1.2</dracolich.forge.version>
     <java.version>25</java.version>
     <dracolich.mtg-library.version>1.2.0</dracolich.mtg-library.version>
     <revision>0.0.1-LOCALHOST</revision>
