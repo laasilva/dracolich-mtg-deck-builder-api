@@ -37,7 +37,10 @@ build/
 
 ### Keys ###
 **/resources/keys/
+*.pem
 
 ### Environment ###
 .env
 **/resources/application-dev.yml
+**/resources/application-local*.yml
+**/resources/application-*.local.yml

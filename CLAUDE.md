@@ -5,24 +5,42 @@ MTG deck builder service. Java 25 + Spring Boot 4.x + WebFlux + MongoDB. Owns de
 ## Build & Run
 
 ```bash
-# Build (forge:common 8.1.0+ required, dracolich-ai-api 1.1.0+ required)
 mvn clean install -s ~/.m2/settings-personal.xml
-
-# Run (port 8084, dev profile auto-active)
-mvn spring-boot:run -pl mtg-deck-builder-api-web -s ~/.m2/settings-personal.xml
 ```
 
-Required env in `.env` (or `application-dev.yml`):
+The service is deployed to the `dracolich-dev` cluster and reached through
+`https://dev.dracolich.app/dracolich/mtg-deck-builder/api/v0/`, and that deployed environment is the
+usual target — running the whole ecosystem locally is avoided by preference. Running *this* service
+locally is expected when developing a feature or chasing a bug here. For pure code work,
+`mvn clean install` is verification enough.
+
+To run it locally, create an uncommitted `mtg-deck-builder-api-web/src/main/resources/application-local.yml`
+and run with `SPRING_PROFILES_ACTIVE=local`. It is gitignored and must stay that way — never commit
+local config. Without it the service fails at startup, not at first request, because none of the
+following has a default:
+
 ```
 ANON_COOKIE_SECRET=<32+ char random string>   # openssl rand -base64 48
-MONGODB_DATABASE=dracolich-deck-builder
-MONGODB_URI=mongodb://localhost:27017
-CORS_ALLOWED_ORIGINS=http://localhost:5173
+MONGODB_DATABASE=...
+MONGODB_URI=...
+CORS_ALLOWED_ORIGINS=...
+PORT=<override; every Dracolich service defaults to 8080>
 ```
 
-JWT public key copied from user-api at `mtg-deck-builder-api-web/src/main/resources/keys/ec-public.pem` — never copy the private key.
+Plus two properties that `application.yml` does **not** declare at all — they live only in the Helm
+values, but `MtgLibraryConfig` and `AiApiConfig` read them, so they must be supplied:
 
-End-to-end runtime requires 5 services: MongoDB (27017), user-api (8081), mtg-library-api (8080), ai-api (8082), deck-builder-api (8084).
+```
+dracolich.mtg-library.api.base-url
+dracolich.ai.api.base-url
+```
+
+The JWT public key is **not** in the repo. Copy `ec-public.pem` from user-api to
+`mtg-deck-builder-api-web/src/main/resources/keys/` or point `DRACOLICH_JWT_PUBLIC_KEY` at it —
+never copy the private key.
+
+End-to-end runtime needs MongoDB plus four services, all of which default to port 8080 in their own
+pod: user-api, mtg-library-api, ai-api, deck-builder-api.
 
 ## Module Structure
 
@@ -196,7 +214,11 @@ Used by `/decks/{id}/stats`, `/decks/validate`, `/decks/import/validate`, AND th
 
 ## AI Bridge
 
-deck-builder-api owns the public AI endpoints; ai-api is treated as internal infrastructure. See the root `CLAUDE.md` for the structured-response shape and tool architecture; not duplicated here.
+deck-builder-api owns the public AI endpoints; ai-api is treated as internal infrastructure and is
+never called by the frontend. Deck stats are computed here (`DeckStatsCalculator`) and injected into
+the prompt, which is why ai-api no longer has a `DeckAnalysisTool`. For the structured-response shape
+and tool architecture see `dracolich-ai-api/CLAUDE.md`; for the cross-repo picture see the workspace
+`CLAUDE.md` at `~/Dev/Dracolich/CLAUDE.md`.
 
 ## Repository — `DeckCustomRepository` queries
 
@@ -230,6 +252,8 @@ Two `ErrorUtil` classes split by module concerns:
 
 ## Required Properties
 
+What `application.yml` actually contains:
+
 ```yaml
 spring:
   webflux:
@@ -239,7 +263,7 @@ spring:
     uri: ${MONGODB_URI}
 
 server:
-  port: ${PORT:8084}
+  port: ${PORT:8080}          # actuator is separate, on 7980
 
 dracolich:
   cookie:
@@ -247,21 +271,34 @@ dracolich:
     lifetime: PT24H
     secure: false                      # true in prod
   jwt:
-    public-key: classpath:keys/ec-public.pem
+    public-key: ${DRACOLICH_JWT_PUBLIC_KEY:classpath:keys/ec-public.pem}
+```
+
+**Deliberately absent from `application.yml`** but required by `MtgLibraryConfig` / `AiApiConfig`:
+
+```yaml
+dracolich:
   mtg-library:
     api:
-      base-url: http://localhost:8080/dracolich/mtg-library/api/v0
+      base-url: <mtg-library-api base>
   ai:
     api:
-      base-url: http://localhost:8082/dracolich/ai/api/v0
+      base-url: <ai-api base>
 ```
+
+These are environment-specific, so they are defined per environment in the Helm charts rather than
+defaulted here — that way no environment can silently pick up a hardcoded repo value. Supply them
+from your environment when running locally. **Don't add defaults to `application.yml`** to make the
+clone self-starting; the missing values are the point.
 
 ## Required Dependency Versions
 
+Current pins in `pom.xml`:
+
 ```xml
-<dracolich.forge.version>8.1.0</dracolich.forge.version>     <!-- SSE-aware DmdResponseWrapper -->
+<dracolich.forge.version>8.1.2</dracolich.forge.version>     <!-- >=8.1.0 for the SSE-aware DmdResponseWrapper -->
 <dracolich.mtg-library.version>1.2.0</dracolich.mtg-library.version>
-<dracolich.ai-api.version>1.1.0</dracolich.ai-api.version>   <!-- IssueDto + topic field on CardSuggestionDto -->
+<dracolich.ai-api.version>1.2.0</dracolich.ai-api.version>   <!-- >=1.1.0 for IssueDto + topic on CardSuggestionDto -->
 ```
 
 ## Phase 3 Status — Feature Complete
@@ -276,7 +313,7 @@ All originally-scoped Phase 3 endpoints have shipped. Outstanding work is harden
 | `application-prod.yml` | DEFERRED | Helm/ArgoCD phase (Azure AKS) |
 | Rate limiting | DEFERRED | Spring Cloud Gateway phase |
 | Banned-list validation | DEFERRED | Would need per-card legality lookups |
-| ai-api auth | DEFERRED | Post-Phase 4 per root CLAUDE.md note |
+| ai-api auth | DEFERRED | ai-api has no auth on any endpoint; mitigated only by it being cluster-internal behind this service. A launch blocker, not permanent debt. |
 
 ## Implementation Notes
 
